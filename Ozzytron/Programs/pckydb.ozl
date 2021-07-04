@@ -1,0 +1,937 @@
+﻿$0000 |     ;****************************************************************************
+$0000 |     ; PC KEYBOARD INTERFACE FOR THE 6502 MICROPROCESSOR UTILIZING A 6522 VIA
+$0000 |     ; (OR SUITABLE SUBSTITUTE)
+$0000 |     ;
+$0000 |     ; DESIGNED AND WRITTEN BY DARYL RICTOR (C) 2001 65C02@ALTAVISTA.COM
+$0000 |     ; OFFERED AS FREEWARE. NO WARRANTY IS GIVEN. USE AT YOUR OWN RISK.
+$0000 |     ;
+$0000 |     ; SOFTWARE REQUIRES ABOUT 930 BYTES OF RAM OR ROM FOR CODE STORAGE AND ONLY 4 BYTES
+$0000 |     ; IN RAM FOR TEMPORARY STORAGE. ZERO PAGE LOCATIONS CAN BE USED BUT ARE NOT REQUIRED.
+$0000 |     ;
+$0000 |     ; HARDWARE UTILIZES ANY TWO BIDIRECTION IO BITS FROM A 6522 VIA CONNECTED DIRECTLY
+$0000 |     ; TO A 5-PIN DIN SOCKET (OR 6 PIN PS2 DIN). IN THIS EXAMPLE I'M USING THE
+$0000 |     ; 6526 PB4 (CLK) & PB5 (DATA) PINS CONNECTED TO A 5-PIN DIN. THE CODE COULD BE
+$0000 |     ; REWRITTEN TO SUPPORT OTHER IO ARRANGEMENTS AS WELL.
+$0000 |     ; ________________________________________________________________________________
+$0000 |     ;| |
+$0000 |     ;| 6502 <-> PC KEYBOARD INTERFACE SCHEMATIC BY DARYL RICTOR (C) 2001 |
+$0000 |     ;| 65C02@ALTAVISTA.COM |
+$0000 |     ;| |
+$0000 |     ;| __________ |
+$0000 |     ;| ____________________________________| | |
+$0000 |     ;| / KEYBOARD DATA 15 |PB5 | |
+$0000 |     ;| | | | |
+$0000 |     ;| _____|_____ | | |
+$0000 |     ;| / | \ | 6522 | |
+$0000 |     ;| / O \ +5VDC (300MA) | VIA | |
+$0000 |     ;| /-------O 2 O--------------------O----> | | |
+$0000 |     ;| | | 4 5 | | | | |
+$0000 |     ;| | | | *C1 __|__ | | |
+$0000 |     ;| | | O 1 3 O | _____ | | |
+$0000 |     ;| | | | | | | | |
+$0000 |     ;| | \ | / __|__ | | |
+$0000 |     ;| | \| _ / ___ | | |
+$0000 |     ;| | |____| |____/ - | | |
+$0000 |     ;| | | *C1 0.1UF BYPASS CAP | | |
+$0000 |     ;| | | | | |
+$0000 |     ;| | \__________________________________________| | |
+$0000 |     ;| | KEYBOARD CLOCK 14 | PB4 | |
+$0000 |     ;| __|__ |__________| |
+$0000 |     ;| ___ |
+$0000 |     ;| - |
+$0000 |     ;| KEYBOARD SOCKET (NOT THE KEYBOARD CABLE) |
+$0000 |     ;| (AS VIEWED FACING THE HOLES) |
+$0000 |     ;| |
+$0000 |     ;|________________________________________________________________________________|
+$0000 |     ;
+$0000 |     ; SOFTWARE COMMUNICATES TO/FROM THE KEYBOARD AND CONVERTS THE RECEIVED SCAN-CODES
+$0000 |     ; INTO USABLE ASCII CODE. ASCII CODES 01-7F ARE DECODED AS WELL AS EXTRA
+$0000 |     ; PSEUDO-CODES IN ORDER TO ACESS ALL THE EXTRA KEYS INCLUDING CURSOR, NUM PAD, FUNCTION,
+$0000 |     ; AND 3 WINDOWS 98 KEYS. IT WAS TESTED ON TWO INEXPENSIVE KEYBOARDS WITH NO ERRORS.
+$0000 |     ; JUST IN CASE, THOUGH, I'VE CODED THE <CTRL>-<PRINT SCREEN> KEY COMBINATION TO PERFORM
+$0000 |     ; A KEYBOARD RE-INITIALIZATION JUST IN CASE IT GOES SOUTH DURING DATA ENTRY.
+$0000 |     ;
+$0000 |     ; RECOMMENDED ROUTINES CALLABLE FROM EXTERNAL PROGRAMS
+$0000 |     ;
+$0000 |     ; KBINPUT - WAIT FOR A KEY PRESS AND RETURN WITH ITS ASSIGNED ASCII CODE IN A.
+$0000 |     ; KBGET - WAIT FOR A KEY PRESS AND RETURN WITH ITS UNPROCESSED SCANCODE IN A.
+$0000 |     ; KBSCAN - SCAN THE KEYBOARD FOR 105US, RETURNS 0 IN A IF NO KEY PRESSED.
+$0000 |     ; RETURN AMBIGUOUS DATA IN A IF KEY IS PRESSED. USE KBINPUT OR KBGET
+$0000 |     ; TO GET THE KEY INFORMATION. YOU CAN MODIFY THE CODE TO AUTOMATICALLY
+$0000 |     ; JUMP TO EITHER ROUTINE IF YOUR APPLICATION NEEDS IT.
+$0000 |     ; KBINIT - INITIALIZE THE KEYBOARD AND ASSOCIATED VARIABLES AND SET THE LEDS
+$0000 |     ;
+$0000 |     ;****************************************************************************
+$0000 |     ;
+$0000 |     ; ALL STANDARD KEYS AND CONTROL KEYS ARE DECODED TO 7 BIT (BIT 7=0) STANDARD ASCII.
+$0000 |     ; CONTROL KEY NOTE: IT IS BEING ASSUMED THAT IF YOU HOLD DOWN THE CTRL KEY,
+$0000 |     ; YOU ARE GOING TO PRESS AN ALPHA KEY (A-Z) WITH IT (EXCEPT BREAK KEY DEFINED BELOW.)
+$0000 |     ; IF YOU PRESS ANOTHER KEY, ITS ASCII CODE'S LOWER 5 BITS WILL BE SEND AS A CONTROL
+$0000 |     ; CODE. FOR EXAMPLE, CTRL-1 SENDS $11, CTRL-; SENDS $2B (ESC), CTRL-F1 SENDS $01.
+$0000 |     ;
+$0000 |     ; THE FOLLOWING NO-STANDARD KEYS ARE DECODED WITH BIT 7=1, BIT 6=0 IF NOT SHIFTED,
+$0000 |     ; BIT 6=1 IF SHIFTED, AND BITS 0-5 IDENTIFY THE KEY.
+$0000 |     ;
+$0000 |     ; FUNCTION KEY TRANSLATION:
+$0000 |     ; ASCII / SHIFTED ASCII
+$0000 |     ; F1 - 81 / C1
+$0000 |     ; F2 - 82 / C2
+$0000 |     ; F3 - 83 / C3
+$0000 |     ; F4 - 84 / C4
+$0000 |     ; F5 - 85 / C5
+$0000 |     ; F6 - 86 / C6
+$0000 |     ; F7 - 87 / C7
+$0000 |     ; F8 - 88 / C8
+$0000 |     ; F9 - 89 / C9
+$0000 |     ; F10 - 8A / CA
+$0000 |     ; F11 - 8B / CB
+$0000 |     ; F12 - 8C / CC
+$0000 |     ;
+$0000 |     ; THE PRINT SCREEN AND PAUSE/BREAK KEYS ARE DECODED AS:
+$0000 |     ; ASCII SHIFTED ASCII
+$0000 |     ; PRTSCN - 8F CF
+$0000 |     ; CTRL-PRTSCN - PERFORMS KEYBOARD REINITIALIZATION IN CASE OF ERRORS
+$0000 |     ; (HAVEN'T HAD ANY YET) (CAN BE REMOVED OR CHANGED BY USER)
+$0000 |     ; PAUSE/BRK - 03 03 (CTRL-C) (CAN CHANGE TO 8E/CE)(NON-REPEATING KEY)
+$0000 |     ; CTRL-BREAK - 02 02 (CTRL-B) (CAN BE CHANGED TO AE/EE)(NON-REPEATING KEY)
+$0000 |     ; SCRL LCK - 8D CD
+$0000 |     ;
+$0000 |     ; THE ALT KEY IS DECODED AS A HOLD DOWN (LIKE SHIFT AND CTRL) BUT DOES NOT
+$0000 |     ; ALTER THE ASCII CODE OF THE KEY(S) THAT FOLLOW. RATHER, IT SENDS
+$0000 |     ; A ALT KEY-DOWN CODE AND A SEPERATE ALT KEY-UP CODE. THE USER PROGRAM
+$0000 |     ; WILL HAVE TO KEEP TRACK OF IT IF THEY WANT TO USE ALT KEYS.
+$0000 |     ;
+$0000 |     ; ALT DOWN - A0
+$0000 |     ; ALT UP - E0
+$0000 |     ;
+$0000 |     ; EXAMPLE BYTE STREAM OF THE ALT-F1 SEQUENCE: A0 81 E0. IF ALT IS HELD DOWN LONGER
+$0000 |     ; THAN THE REPEAT DELAY, A SERIES OF A0'S WILL PRECEEED THE 81 E0.
+$0000 |     ; I.E. A0 A0 A0 A0 A0 A0 81 E0.
+$0000 |     ;
+$0000 |     ; THE THREE WINDOWS 98 KEYS ARE DECODED AS FOLLOWS:
+$0000 |     ; ASCII SHIFTED ASCII
+$0000 |     ; LEFT MENU KEY - A1 E1
+$0000 |     ; RIGHT MENU KEY - A2 E2
+$0000 |     ; RIGHT OPTION KEY - A3 E3
+$0000 |     ;
+$0000 |     ; THE FOLLOWING "SPECIAL" KEYS IGNORE THE SHIFT KEY AND RETURN THEIR SPECIAL KEY CODE
+$0000 |     ; WHEN NUMLOCK IS OFF OR THEIR DIRECT LABELED KEY IS PRESSED. WHEN NUMLOCK IS ON, THE DIGITS
+$0000 |     ; ARE RETURNED REGUARDLESS OF SHIFT KEY STATE.
+$0000 |     ; KEYPAD(NUMLCK OFF) OR DIRECT - ASCII KEYPAD(NUMLCK ON) ASCII
+$0000 |     ; KEYPAD 0 INS - 90 30
+$0000 |     ; KEYPAD . DEL - 7F 2E
+$0000 |     ; KEYPAD 7 HOME - 97 37
+$0000 |     ; KEYPAD 1 END - 91 31
+$0000 |     ; KEYPAD 9 PGUP - 99 39
+$0000 |     ; KEYPAD 3 PGDN - 93 33
+$0000 |     ; KEYPAD 8 UPARROW - 98 38
+$0000 |     ; KEYPAD 2 DNARROW - 92 32
+$0000 |     ; KEYPAD 4 LFARROW - 94 34
+$0000 |     ; KEYPAD 6 RTARROW - 96 36
+$0000 |     ; KEYPAD 5 (BLANK) - 95 35
+$0000 |     ;
+$0000 |     ;****************************************************************************
+$0000 |     ;
+$0000 |     ; I/O PORT DEFINITIONS
+$0000 |
+$0000 |     KBPORTREG   =       $7F01   ; 6522 IO PORT REGISTER B
+$0000 |     KBPORTDDR   =       $7F03   ; 6522 IO DATA DIRECTION REGISTER B
+$0000 |     CLK =       $10     ; 6522 IO PORT CLOCK BIT MASK (PB4)
+$0000 |     DATA        =       $20     ; 6522 IO PORT DATA BIT MASK (PB5)
+$0000 |
+$0000 |     ; NOTE: SOME LOCATIONS USE THE INVERSE OF THE BIT MASKS TO CHANGE THE STATE OF
+$0000 |     ; BIT. YOU WILL HAVE TO FIND THEM AND CHANGE THEM IN THE CODE ACORDINGLY.
+$0000 |     ; TO MAKE THIS EASIER, I'VE PLACED THIS TEXT IN THE COMMENT OF EACH SUCH STATEMENT:
+$0000 |     ; "(CHANGE IF PORT BITS CHANGE)"
+$0000 |     ;
+$0000 |     ;
+$0000 |     ; TEMPORTARY STORAGE LOCATIONS (ZERO PAGE CAN BE USED BUT NOT NECESSARY)
+$0000 |
+$0000 |     BYTE        =       $02D0   ; BYTE SEND/RECEIVED
+$0000 |     PARITY      =       $02D1   ; PARITY HOLDER FOR RX
+$0000 |     SPECIAL     =       $02D2   ; CTRL, SHIFT, CAPS AND KB LED HOLDER
+$0000 |     LASTBYTE    =       $02D3   ; LAST BYTE RECEIVED
+$0000 |
+$0000 |     ; BIT DEFINITIONS FOR THE SPECIAL VARIABLE
+$0000 |     ; (1 IS ACTIVE, 0 INACTIVE)
+$0000 |     ; SPECIAL = 01 - SCROLL LOCK
+$0000 |     ; 02 - NUM LOCK
+$0000 |     ; 04 - CAPS LOCK
+$0000 |     ; 08 - CONTROL (EITHER LEFT OR RIGHT)
+$0000 |     ; 10 - SHIFT (EITHER LEFT OR RIGHT)
+$0000 |     ;
+$0000 |     ; SCROLL LOCK LED IS USED TO TELL WHEN READY FOR INPUT
+$0000 |     ; SCROLL LOCK LED ON = NOT READY FOR INPUT
+$0000 |     ; SCROLL LOCK LED OFF = WAITING (READY) FOR INPUT
+$0000 |     ;
+$0000 |     ; NUM LOCK AND CAPS LOCK LED'S ARE USED NORMALLY TO
+$0000 |     ; INDICATE THEIR RESPECTIVE STATES.
+$0000 |     ;
+$0000 |     ;***************************************************************************************
+$0000 |     ;
+$0000 |     ; TEST PROGRAM - READS INPUT, PRINTS THE ASCII CODE TO THE TERMINAL AND LOOPS UNTIL THE
+$0000 |     ; TARGET KEYBOARD <ESC> KEY IS PRESSED.
+$0000 |     ;
+$0000 |     ; EXTERNAL ROUTINE "OUTPUT" PRINTS CHARACTER IN A TO THE TERMINAL
+$0000 |     ; EXTERNAL ROUTINE "PRINT1BYTE" PRINTS A REGISTER AS TWO HEXIDECIMAL CHARACTERS
+$0000 |     ; EXTERNAL ROUTINE "PRINT_CR" PRINTS CHARACTERS $0D & $0A TO THE TERMINAL
+$0000 |     ; (SUBSTITUTE YOUR OWN ROUTINES AS NEEDED)
+$0000 |     ;
+$0000 |         .ORG    $FFFC
+$FFFC |         .WORD   $1000   ; RESET TO START OF PROGRAM
+$FFFE |
+$FFFE |         .ORG    $1000   ; LOCATE PROGRAM BEGINNING AT $1000
+$1000 |         JSR     KBINIT  ; INIT THE KEYBOARD, LEDS, AND FLAGS
+$1003 |     LP0:
+$1003 |         JSR     PRINT_CR        ; PRINTS 0D 0A (CR LF) TO THE TERMINAL
+$1006 |     LP1:
+$1006 |         JSR     KBINPUT ; WAIT FOR A KEYPRESS, RETURN DECODED ASCII CODE IN A
+$1009 |         CMP     #$0D    ; IF CR, THEN PRINT CR LF TO TERMINAL
+$100B |         BEQ     LP0     ;
+$100D |         CMP     #$1B    ; ESC ASCII CODE
+$100F |         BEQ     LP2     ;
+$1011 |         CMP     #$20    ;
+$1013 |         BCC     LP3     ; CONTROL KEY, PRINT AS <HH> EXCEPT $0D (CR) & $2B (ESC)
+$1015 |         CMP     #$80    ;
+$1017 |         BCS     LP3     ; EXTENDED KEY, JUST PRINT THE HEX ASCII CODE AS <HH>
+$1019 |         JSR     OUTPUT  ; PRINTS CONTENTS OF A REG TO THE TERMINAL, ASCII 20-7F
+$101C |         BRA     LP1     ;
+$101E |     LP2:
+$101E |         RTS     ; DONE
+$101F |     LP3:
+$101F |         PHA     ;
+$1020 |         LDA     #$3C    ; <
+$1022 |         JSR     OUTPUT  ;
+$1025 |         PLA     ;
+$1026 |         JSR     PRINT1BYTE      ; PRINT 1 BYTE IN ASCII HEX
+$1029 |         LDA     #$3E    ; >
+$102B |         JSR     OUTPUT  ;
+$102E |         BRA     LP1     ;
+$1030 |     ; EXTERNAL ROUTINES
+$1030 |     OUTPUT:     ; PRINTS CHARACTER IN A TO THE TERMINAL
+$1030 |         STA     $00
+$1032 |         RTS     ; DONE
+$1033 |     PRINT1BYTE: ; PRINTS A REGISTER AS TWO HEXIDECIMAL CHARACTERS
+$1033 |         STA     $01
+$1035 |         RTS     ; DONE
+$1036 |     PRINT_CR:   ; PRINTS CHARACTERS $0D & $0A TO THE TERMINAL
+$1036 |         RTS     ; DONE
+$1037 |     ;**************************************************************************************
+$1037 |     ;
+$1037 |     ; DECODING ROUTINES
+$1037 |     ;
+$1037 |     ; KBINPUT IS THE MAIN ROUTINE TO CALL TO GET AN ASCII CHAR FROM THE KEYBOARD
+$1037 |     ; (WAITS FOR A NON-ZERO ASCII CODE)
+$1037 |     ;
+$1037 |
+$1037 |         .ORG    $7000   ; PLACE DECODER @ $7000
+$7000 |
+$7000 |     KBREINIT:
+$7000 |         JSR     KBINIT  ;
+$7003 |     KBINPUT:
+$7003 |         JSR     KBTSCRL ; TURN OFF SCROLL LOCK (READY TO INPUT)
+$7006 |         BNE     KBINPUT ; ENSURE ITS OFF
+$7008 |     KBINPUT1:
+$7008 |         JSR     KBGET   ; GET A CODE (WAIT FOR A KEY TO BE PRESSED)
+$700B |         JSR     KBCSRCH ; SCAN FOR 14 SPECIAL CASE CODES
+$700E |     KBCNVT:
+$700E |         BEQ     KBINPUT1        ; 0=COMPLETE, GET NEXT SCANCODE
+$7010 |         TAX     ; SET UP SCANCODE AS TABLE POINTER
+$7011 |         CMP     #$78    ; SEE IF ITS THE F11
+$7013 |         BEQ     KBCNVT1 ; IT IS, SKIP KEYPAD TEST
+$7015 |         CMP     #$69    ; TEST FOR KEYPAD CODES 69
+$7017 |         BMI     KBCNVT1 ; THRU
+$7019 |         CMP     #$7E    ; 7D (EXCEPT 78 TESTED ABOVE)
+$701B |         BPL     KBCNVT1 ; SKIP IF NOT A KEYPAD CODE
+$701D |         LDA     SPECIAL ; TEST NUMLOCK
+$7020 |         BIT     #$02    ; NUMLOCK ON?
+$7022 |         BEQ     KBCNVT2 ; NO, SET SHIFTED TABLE FOR SPECIAL KEYS
+$7024 |         TXA     ; YES, SET UNSHIFTED TABLE FOR NUMBER KEYS
+$7025 |         AND     #$7F    ;
+$7027 |         TAX     ;
+$7028 |         BRA     KBCNVT3 ; SKIP SHIFT TEST
+$702A |     KBCNVT1:
+$702A |         LDA     SPECIAL ;
+$702D |         BIT     #$10    ; SHIFT ENABLED?
+$702F |         BEQ     KBCNVT3 ; NO
+$7031 |     KBCNVT2:
+$7031 |         TXA     ; YES
+$7032 |         ORA     #$80    ; SET SHIFTED TABLE
+$7034 |         TAX     ;
+$7035 |     KBCNVT3:
+$7035 |         LDA     SPECIAL ;
+$7038 |         BIT     #$08    ; CONTROL?
+$703A |         BEQ     KBCNVT4 ; NO
+$703C |         LDA     ASCIITBL,X      ; GET ASCII CODE
+$703F |         CMP     #$8F    ; {CTRL-PRINTSCRN - DO RE-INIT OR USER CAN REMOVE THIS CODE }
+$7041 |         BEQ     KBREINIT        ; {DO KB REINIT }
+$7043 |         AND     #$1F    ; MASK CONTROL CODE (ASSUMES A-Z IS PRESSED)
+$7045 |         BEQ     KBINPUT1        ; ENSURE MASK DIDN'T LEAVE 0
+$7047 |         TAX     ;
+$7048 |         BRA     KBDONE  ;
+$704A |     KBCNVT4:
+$704A |         LDA     ASCIITBL,X      ; GET ASCII CODE
+$704D |         BEQ     KBINPUT1        ; IF ASCII CODE IS 0, INVALID SCANCODE, GET ANOTHER
+$704F |         TAX     ; SAVE ASCII CODE IN X REG
+$7050 |         LDA     SPECIAL ;
+$7053 |         BIT     #$04    ; TEST CAPS LOCK
+$7055 |         BEQ     KBDONE  ; CAPS LOCK OFF
+$7057 |         TXA     ; CAPS LOCK ON - GET ASCII CODE
+$7058 |         CMP     #$61    ; TEST FOR LOWER CASE A
+$705A |         BCC     KBDONE  ; IF LESS THAN, SKIP DOWN
+$705C |         CMP     #$7B    ; TEST FOR LOWER CASE Z
+$705E |         BCS     KBDONE  ; IF GREATER THAN, SKIP DOWN
+$7060 |         SEC     ; ALPHA CHR FOUND, MAKE IT UPPERCASE
+$7061 |         SBC     #$20    ; IF CAPS ON AND LOWERCASE, CHANGE TO UPPER
+$7063 |         TAX     ; PUT NEW ASCII TO X REG
+$7064 |     KBDONE:
+$7064 |         PHX     ; SAVE ASCII TO STACK
+$7065 |     KBDONE1:
+$7065 |         JSR     KBTSCRL ; TURN ON SCROLL LOCK (NOT READY TO RECEIVE)
+$7068 |         BEQ     KBDONE1 ; ENSURE SCROLL LOCK IS ON
+$706A |         PLA     ; GET ASCII CODE
+$706B |         RTS     ; RETURN TO CALLING PROGRAM
+$706C |     ;
+$706C |     ;******************************************************************************
+$706C |     ;
+$706C |     ; SCAN CODE PROCESSING ROUTINES
+$706C |     ;
+$706C |     ;
+$706C |     KBTRAP83:
+$706C |         LDA     #$02    ; TRAPS THE F7 CODE OF $83 AND CHANG
+$706E |         RTS     ;
+$706F |     ;
+$706F |     KBSSHIFT:
+$706F |         LDA     #$10    ; *** NEAT TRICK TO TUCK CODE INSIDE HARMLESS CMD
+$7071 |         .BYTE   $2C     ; *** USE BIT ABSOLUTE TO SKIP LDA #$02 BELOW
+$7071 |     KBSCTRL:
+$7071 |         LDA     #$08    ; *** DISASSEMBLES AS LDA #$01
+$7073 |         ORA     SPECIAL ; BIT $A902
+$7076 |         STA     SPECIAL ; ORA $02D3
+$7079 |         BRA     KBNULL  ; RETURN WITH 0 IN A
+$707B |     ;
+$707B |     KBTNUM:
+$707B |         LDA     SPECIAL ; TOGGLE NUMLOCK BIT IN SPECIAL
+$707E |         EOR     #$02    ;
+$7080 |         STA     SPECIAL ;
+$7083 |         JSR     KBSLED  ; UPDATE KEYBOARD LEDS
+$7086 |         BRA     KBNULL  ; RETURN WITH 0 IN A
+$7088 |     ;
+$7088 |     KBRESEND:
+$7088 |         LDA     LASTBYTE        ;
+$708B |         JSR     KBSEND  ;
+$708E |         BRA     KBNULL  ; RETURN WITH 0 IN A
+$7090 |     ;
+$7090 |     KBTCAPS:
+$7090 |         LDA     SPECIAL ; TOGGLE CAPS BIT IN SPECIAL
+$7093 |         EOR     #$04    ;
+$7095 |         STA     SPECIAL ;
+$7098 |         JSR     KBSLED  ; SET NEW STATUS LEDS
+$709B |     KBNULL:
+$709B |         LDA     #$00    ; SET CAPS, GET NEXT CODE
+$709D |         RTS     ;
+$709E |     ;
+$709E |     KBEXT:
+$709E |         JSR     KBGET   ; GET NEXT CODE
+$70A1 |         CMP     #$F0    ; IS IT AN EXTENDED KEY RELEASE?
+$70A3 |         BEQ     KBEXRLS ; TEST FOR SHIFT, CTRL, CAPS
+$70A5 |         CMP     #$14    ; RIGHT CONTROL?
+$70A7 |         BEQ     KBSCTRL ; SET CONTROL AND GET NEXT SCANCODE
+$70A9 |         LDX     #$03    ; TEST FOR 4 SCANCODE TO BE RELOCATED
+$70AB |     KBEXT1:
+$70AB |         CMP     KBEXTLST,X      ; SCAN LIST
+$70AB |         BEQ     KBEXT3  ; GET DATA IF MATCH FOUND
+$70AD |         DEX     ; GET NEXT ITEM
+$70AE |         BPL     KBEXT1  ;
+$70B0 |         CMP     #$3F    ; NOT IN LIST, TEST RANGE 00-3F OR 40-7F
+$70B2 |         BMI     KBEXT2  ; ITS A WINDOWS/ALT KEY, JUST RETURN UNSHIFTED
+$70B4 |         ORA     #$80    ; RETURN SCANCODE AND POINT TO SHIFTED TABLE
+$70B6 |     KBEXT2:
+$70B6 |         RTS     ;
+$70B7 |     KBEXT3:
+$70B7 |         LDA     KBEXTDAT,X      ; GET NEW SCANCODE
+$70B7 |         RTS     ;
+$70B8 |     ;
+$70B8 |     KBEXTLST:
+$70B8 |         .BYTE   $7E     ; E07E CTRL-BREAK SCANCODE
+$70B8 |         .BYTE   $4A     ; E04A KP/
+$70B8 |         .BYTE   $12     ; E012 SCANCODE
+$70B8 |         .BYTE   $7C     ; E07C PRT SCRN
+$70B8 |     ;
+$70B8 |     KBEXTDAT:
+$70B8 |         .BYTE   $20     ; NEW CTRL-BRK SCANCODE
+$70B8 |         .BYTE   $6A     ; NEW KP/ SCANCODE
+$70B8 |         .BYTE   $00     ; DO NOTHING (RETURN AND GET NEXT SCANCODE)
+$70B8 |         .BYTE   $0F     ; NEW PRT SCRN SCANCODE
+$70B8 |     ;
+$70B8 |     KBEXRLS:
+$70B8 |         JSR     KBGET   ;
+$70BB |         CMP     #$12    ; IS IT A RELEASE OF THE E012 CODE?
+$70BD |         BNE     KBRLSE1 ; NO - PROCESS NORMAL RELEASE
+$70BF |         BRA     KBNULL  ; RETURN WITH 0 IN A
+$70C1 |     ;
+$70C1 |     KBRLSE:
+$70C1 |         JSR     KBGET   ; TEST FOR SHIFT & CTRL
+$70C4 |         CMP     #$12    ;
+$70C6 |         BEQ     KBRSHIFT        ; RESET SHIFT BIT
+$70C8 |         CMP     #$59    ;
+$70CA |         BEQ     KBRSHIFT        ;
+$70CC |     KBRLSE1:
+$70CC |         CMP     #$14    ;
+$70CE |         BEQ     KBRCTRL ;
+$70D0 |         CMP     #$11    ; ALT KEY RELEASE
+$70D2 |         BNE     KBNULL  ; RETURN WITH 0 IN A
+$70D4 |     KBRALT:
+$70D4 |         LDA     #$13    ; NEW ALT RELEASE SCANCODE
+$70D6 |         RTS     ;
+$70D7 |     KBRCTRL:
+$70D7 |         LDA     #$F7    ; RESET CTRL BIT IN SPECIAL
+$70D9 |         .BYTE   $2C     ; USE (BIT ABSOLUTE) TO SKIP LDA #$EF IF PASSING DOWN
+$70D9 |     KBRSHIFT:
+$70D9 |         LDA     #$EF    ; RESET SHIFT BIT IN SPECIAL
+$70DB |         AND     SPECIAL ;
+$70DE |         STA     SPECIAL ;
+$70E1 |         BRA     KBNULL  ; RETURN WITH 0 IN A
+$70E3 |     ;
+$70E3 |     KBTSCRL:
+$70E3 |         LDA     SPECIAL ; TOGGLE SCROLL LOCK BIT IN SPECIAL
+$70E6 |         EOR     #$01    ;
+$70E8 |         STA     SPECIAL ;
+$70EB |         JSR     KBSLED  ; UPDATE KEYBOARD LEDS
+$70EE |         LDA     SPECIAL ;
+$70F1 |         BIT     #$01    ; CHECK SCROLL LOCK STATUS BIT
+$70F3 |         RTS     ; RETURN
+$70F4 |     ;
+$70F4 |     KBBRK:
+$70F4 |         LDX     #$07    ; IGNORE NEXT 7 SCANCODES THEN
+$70F6 |     KBBRK1:
+$70F6 |         JSR     KBGET   ; GET SCANCODE
+$70F9 |         DEX     ;
+$70FA |         BNE     KBBRK1  ;
+$70FC |         LDA     #$10    ; NEW SCAN CODE
+$70FE |         RTS     ;
+$70FF |     ;
+$70FF |     KBCSRCH:
+$70FF |         LDX     #$0E    ; 14 CODES TO CHECK
+$7101 |     KBCSRCH1:
+$7101 |         CMP     KBCLST,X        ; SEARCH SCANCODE TABLE FOR SPECIAL PROCESSING
+$7104 |         BEQ     KBCSRCH2        ; IF FOUND RUN THE ROUTINE
+$7106 |         DEX     ;
+$7107 |         BPL     KBCSRCH1        ;
+$7109 |         RTS     ; NO MATCH, RETURN FROM HERE FOR FURTHER PROCESSING
+$710A |     KBCSRCH2:
+$710A |         TXA     ; CODE FOUND - GET INDEX
+$710B |         ASL     ; MULT BY TWO
+$710C |         TAX     ; SAVE BACK TO X
+$710D |         LDA     BYTE    ; LOAD SCANCODE BACK INTO A
+$7110 |         JMP     (KBCCMD,X)      ; EXECUTE SCANCODE ROUTINE, RETURN 0 IF DONE
+$7110 |         ; NONZERO SCANCODE IF READY FOR ASCII CONVERSION
+$7110 |     ;
+$7110 |     ;KEYBOARD COMMAND/SCANCODE TEST LIST
+$7110 |     ; DB=DEFINE BYTE, STORES ONE BYTE OF DATA
+$7110 |     ;
+$7110 |     KBCLST:
+$7110 |         .BYTE   $83     ; F7 - MOVE TO SCANCODE 02
+$7110 |         .BYTE   $58     ; CAPS
+$7110 |         .BYTE   $12     ; LSHIFT
+$7110 |         .BYTE   $59     ; RSHIFT
+$7110 |         .BYTE   $14     ; CTRL
+$7110 |         .BYTE   $77     ; NUM LOCK
+$7110 |         .BYTE   $E1     ; EXTENDED PAUSE BREAK
+$7110 |         .BYTE   $E0     ; EXTENDED KEY HANDLER
+$7110 |         .BYTE   $F0     ; RELEASE 1 BYTE KEY CODE
+$7110 |         .BYTE   $FA     ; ACK
+$7110 |         .BYTE   $AA     ; POST PASSED
+$7110 |         .BYTE   $EE     ; ECHO
+$7110 |         .BYTE   $FE     ; RESEND
+$7110 |         .BYTE   $FF     ; OVERFLOW/ERROR
+$7110 |         .BYTE   $00     ; UNDERFLOW/ERROR
+$7110 |     ;
+$7110 |     ; COMMAND/SCANCODE JUMP TABLE
+$7110 |     ;
+$7110 |     KBCCMD:
+$7110 |         .WORD   KBTRAP83        ;
+$7112 |         .WORD   KBTCAPS ;
+$7114 |         .WORD   KBSSHIFT        ;
+$7116 |         .WORD   KBSSHIFT        ;
+$7118 |         .WORD   KBSCTRL ;
+$711A |         .WORD   KBTNUM  ;
+$711C |         .WORD   KBBRK   ;
+$711E |         .WORD   KBEXT   ;
+$7120 |         .WORD   KBRLSE  ;
+$7122 |         .WORD   KBNULL  ;
+$7124 |         .WORD   KBNULL  ;
+$7126 |         .WORD   KBNULL  ;
+$7128 |         .WORD   KBRESEND        ;
+$712A |         .WORD   KBFLUSH ;
+$712C |         .WORD   KBFLUSH ;
+$712E |     ;
+$712E |     ;**************************************************************
+$712E |     ;
+$712E |     ; KEYBOARD I/O SUPORT
+$712E |     ;
+$712E |
+$712E |     ;
+$712E |     ; KBSCAN WILL SCAN THE KEYBOARD FOR INCOMING DATA FOR ABOUT
+$712E |     ; 105US AND RETURNS WITH A=0 IF NO DATA WAS RECEIVED.
+$712E |     ; IT DOES NOT DECODE ANYTHING, THE NON-ZERO VALUE IN A IF DATA
+$712E |     ; IS READY IS AMBIGUOUS. YOU MUST CALL KBGET OR KBINPUT TO
+$712E |     ; GET THE KEYBOARD DATA.
+$712E |     ;
+$712E |     KBSCAN:
+$712E |         LDX     #$05    ; TIMER: X = (CYCLES - 40)/13 (105-40)/13=5
+$7130 |         LDA     KBPORTDDR       ;
+$7133 |         AND     #$CF    ; SET CLK TO INPUT (CHANGE IF PORT BITS CHANGE)
+$7135 |         STA     KBPORTDDR       ;
+$7138 |     KBSCAN1:
+$7138 |         LDA     #CLK    ;
+$713A |         BIT     KBPORTREG       ;
+$713D |         BEQ     KBSCAN2 ; IF CLK GOES LOW, DATA READY
+$713F |         DEX     ; REDUCE TIMER
+$7140 |         BNE     KBSCAN1 ; WAIT WHILE CLK IS HIGH
+$7142 |         JSR     KBDIS   ; TIMED OUT, NO DATA, DISABLE RECEIVER
+$7145 |         LDA     #$00    ; SET DATA NOT READY FLAG
+$7147 |         RTS     ; RETURN
+$7148 |     KBSCAN2:
+$7148 |         JSR     KBDIS   ; DISABLE THE RECEIVER SO OTHER ROUTINES GET IT
+$714B |     ; THREE ALTERNATIVE EXITS IF DATA IS READY TO BE RECEIVED: EITHER RETURN OR JMP TO HANDLER
+$714B |         RTS     ; RETURN (A<>0, A=CLK BIT MASK VALUE FROM KBDIS)
+$714C |     ; JMP KBINPUT ; IF KEY PRESSED, DECODE IT WITH KBINPUT
+$714C |     ; JMP KBGET ; IF KEY PRESSED, DECODE IT WITH KBGET
+$714C |     ;
+$714C |     ;
+$714C |     KBFLUSH:
+$714C |         LDA     #$F4    ; FLUSH BUFFER
+$714E |     ;
+$714E |     ; SEND A BYTE TO THE KEYBOARD
+$714E |     ;
+$714E |     KBSEND:
+$714E |         STA     BYTE    ; SAVE BYTE TO SEND
+$7151 |         PHX     ; SAVE REGISTERS
+$7152 |         PHY     ;
+$7153 |         STA     LASTBYTE        ; KEEP JUST IN CASE THE SEND FAILS
+$7156 |         LDA     KBPORTREG       ;
+$7159 |         AND     #$EF    ; CLK LOW, DATA HIGH (CHANGE IF PORT BITS CHANGE)
+$715B |         ORA     #DATA   ;
+$715D |         STA     KBPORTREG       ;
+$7160 |         LDA     KBPORTDDR       ;
+$7163 |         ORA     #$30    ; BIT BITS HIGH (CHANGE IF PORT BITS CHANGE)
+$7165 |         STA     KBPORTDDR       ; SET OUTPUTS, CLK=0, DATA=1
+$7168 |         LDA     #$10    ; 1MHZ CPU CLOCK DELAY (DELAY = CPUCLK/62500)
+$716A |     KBSENDW:
+$716A |         DEC     ;
+$716B |         BNE     KBSENDW ; 64US DELAY
+$716D |         LDY     #$00    ; PARITY COUNTER
+$716F |         LDX     #$08    ; BIT COUNTER
+$7171 |         LDA     KBPORTREG       ;
+$7174 |         AND     #$CF    ; CLK LOW, DATA LOW (CHANGE IF PORT BITS CHANGE)
+$7176 |         STA     KBPORTREG       ;
+$7179 |         LDA     KBPORTDDR       ;
+$717C |         AND     #$EF    ; SET CLK AS INPUT (CHANGE IF PORT BITS CHANGE)
+$717E |         STA     KBPORTDDR       ; SET OUTPUTS
+$7181 |         JSR     KBHIGHLOW       ;
+$7184 |     KBSEND1:
+$7184 |         ROR     BYTE    ; GET LSB FIRST
+$7187 |         BCS     KBMARK  ;
+$7189 |         LDA     KBPORTREG       ;
+$718C |         AND     #$DF    ; TURN OFF DATA BIT (CHANGE IF PORT BITS CHANGE)
+$718E |         STA     KBPORTREG       ;
+$7191 |         BRA     KBNEXT  ;
+$7193 |     KBMARK:
+$7193 |         LDA     KBPORTREG       ;
+$7196 |         ORA     #DATA   ;
+$7198 |         STA     KBPORTREG       ;
+$719B |         INY     ; INC PARITY COUNTER
+$719C |     KBNEXT:
+$719C |         JSR     KBHIGHLOW       ;
+$719F |         DEX     ;
+$71A0 |         BNE     KBSEND1 ; SEND 8 DATA BITS
+$71A2 |         TYA     ; GET PARITY COUNT
+$71A3 |         AND     #$01    ; GET ODD OR EVEN
+$71A5 |         BNE     KBPCLR  ; IF ODD, SEND 0
+$71A7 |         LDA     KBPORTREG       ;
+$71AA |         ORA     #DATA   ; IF EVEN, SEND 1
+$71AC |         STA     KBPORTREG       ;
+$71AF |         BRA     KBACK   ;
+$71B1 |     KBPCLR:
+$71B1 |         LDA     KBPORTREG       ;
+$71B4 |         AND     #$DF    ; SEND DATA=0 (CHANGE IF PORT BITS CHANGE)
+$71B6 |         STA     KBPORTREG       ;
+$71B9 |     KBACK:
+$71B9 |         JSR     KBHIGHLOW       ;
+$71BC |         LDA     KBPORTDDR       ;
+$71BF |         AND     #$CF    ; SET CLK & DATA TO INPUT (CHANGE IF PORT BITS CHANGE)
+$71C1 |         STA     KBPORTDDR       ;
+$71C4 |         PLY     ; RESTORE SAVED REGISTERS
+$71C5 |         PLX     ;
+$71C6 |         JSR     KBHIGHLOW       ; WAIT FOR ACK FROM KEYBOARD
+$71C9 |         BNE     KBINIT  ; VERY RUDE ERROR HANDLER - RE-INIT THE KEYBOARD
+$71CB |     KBSEND2:
+$71CB |         LDA     KBPORTREG       ;
+$71CE |         AND     #CLK    ;
+$71D0 |         BEQ     KBSEND2 ; WAIT WHILE CLK LOW
+$71D2 |         BRA     KBDIS   ; DIABLE KB SENDING
+$71D4 |     ;
+$71D4 |     ; KBGET WAITS FOR ONE SCANCODE FROM THE KEYBOARD
+$71D4 |     ;
+$71D4 |     KBERROR:
+$71D4 |         LDA     #$FE    ; RESEND CMD
+$71D6 |         JSR     KBSEND  ;
+$71D9 |     KBGET:
+$71D9 |         PHX     ;
+$71DA |         PHY     ;
+$71DB |         LDA     #$00    ;
+$71DD |         STA     BYTE    ; CLEAR SCANKEY HOLDER
+$71E0 |         STA     PARITY  ; CLEAR PARITY HOLDER
+$71E3 |         LDY     #$00    ; CLEAR PARITY COUNTER
+$71E5 |         LDX     #$08    ; BIT COUNTER
+$71E7 |         LDA     KBPORTDDR       ;
+$71EA |         AND     #$CF    ; SET CLK TO INPUT (CHANGE IF PORT BITS CHANGE)
+$71EC |         STA     KBPORTDDR       ;
+$71EF |     KBGET1:
+$71EF |         LDA     #CLK    ;
+$71F1 |         BIT     KBPORTREG       ;
+$71F4 |         BNE     KBGET1  ; WAIT WHILE CLK IS HIGH
+$71F6 |         LDA     KBPORTREG       ;
+$71F9 |         AND     #DATA   ; GET START BIT
+$71FB |         BNE     KBGET1  ; IF 1, FALSE START BIT, DO AGAIN
+$71FD |     KBGET2:
+$71FD |         JSR     KBHIGHLOW       ; WAIT FOR CLK TO RETURN HIGH THEN GO LOW AGAIN
+$7200 |         CMP     #$01    ; SET C IF DATA BIT=1, CLR IF DATA BIT=0
+$7202 |         ; (CHANGE IF PORT BITS CHANGE) OK UNLESS DATA=01 OR 80
+$7202 |         ; IN THAT CASE, USE ASL OR LSR TO SET CARRY BIT
+$7202 |         ROR     BYTE    ; SAVE BIT TO BYTE HOLDER
+$7205 |         BPL     KBGET3  ;
+$7207 |         INY     ; ADD 1 TO PARITY COUNTER
+$7208 |     KBGET3:
+$7208 |         DEX     ; DEC BIT COUNTER
+$7209 |         BNE     KBGET2  ; GET NEXT BIT IF BIT COUNT > 0
+$720B |         JSR     KBHIGHLOW       ; WAIT FOR PARITY BIT
+$720E |         BEQ     KBGET4  ; IF PARITY BIT 0 DO NOTHING
+$7210 |         INC     PARITY  ; IF 1, SET PARITY TO 1
+$7213 |     KBGET4:
+$7213 |         TYA     ; GET PARITY COUNT
+$7214 |         PLY     ;
+$7215 |         PLX     ;
+$7216 |         EOR     PARITY  ; COMPARE WITH PARITY BIT
+$7219 |         AND     #$01    ; MASK BIT 1 ONLY
+$721B |         BEQ     KBERROR ; BAD PARITY
+$721D |         JSR     KBHIGHLOW       ; WAIT FOR STOP BIT
+$7220 |         BEQ     KBERROR ; 0=BAD STOP BIT
+$7222 |         LDA     BYTE    ; IF BYTE & PARITY 0,
+$7225 |         BEQ     KBGET   ; NO DATA, DO AGAIN
+$7227 |         JSR     KBDIS   ;
+$722A |         LDA     BYTE    ;
+$722D |         RTS     ;
+$722E |     ;
+$722E |     KBDIS:
+$722E |         LDA     KBPORTREG       ; DISABLE KB FROM SENDING MORE DATA
+$7231 |         AND     #$EF    ; CLK = 0 (CHANGE IF PORT BITS CHANGE)
+$7233 |         STA     KBPORTREG       ;
+$7236 |         LDA     KBPORTDDR       ; SET CLK TO OUPUT LOW
+$7239 |         AND     #$CF    ; (STOP MORE DATA UNTIL READY) (CHANGE IF PORT BITS CHANGE)
+$723B |         ORA     #CLK    ;
+$723D |         STA     KBPORTDDR       ;
+$7240 |         RTS     ;
+$7241 |     ;
+$7241 |     KBINIT:
+$7241 |         LDA     #$02    ; INIT - NUM LOCK ON, ALL OTHER OFF
+$7243 |         STA     SPECIAL ;
+$7246 |     KBINIT1:
+$7246 |         LDA     #$FF    ; KEYBRD RESET
+$7248 |         JSR     KBSEND  ; RESET KEYBOARD
+$724B |         JSR     KBGET   ;
+$724E |         CMP     #$FA    ; ACK?
+$7250 |         BNE     KBINIT1 ; RESEND RESET CMD
+$7252 |         JSR     KBGET   ;
+$7255 |         CMP     #$AA    ; RESET OK
+$7257 |         BNE     KBINIT1 ; RESEND RESET CMD
+$7259 |         ; FALL INTO TO SET THE LEDS
+$7259 |     KBSLED:
+$7259 |         LDA     #$ED    ; SET THE KEYBRD LED'S FROM KBLEDS VARIABLE
+$725B |         JSR     KBSEND  ;
+$725E |         JSR     KBGET   ;
+$7261 |         CMP     #$FA    ; ACK?
+$7263 |         BNE     KBSLED  ; RESEND LED CMD
+$7265 |         LDA     SPECIAL ;
+$7268 |         AND     #$07    ; ENSURE BITS 3-7 ARE 0
+$726A |         JSR     KBSEND  ;
+$726D |         RTS     ;
+$726E |         ;
+$726E |     KBHIGHLOW:
+$726E |         LDA     #CLK    ; WAIT FOR A LOW TO HIGH TO LOW TRANSITION
+$7270 |         BIT     KBPORTREG       ;
+$7273 |         BEQ     KBHIGHLOW       ; WAIT WHILE CLK LOW
+$7275 |     KBHL1:
+$7275 |         BIT     KBPORTREG       ;
+$7278 |         BNE     KBHL1   ; WAIT WHILE CLK IS HIGH
+$727A |         LDA     KBPORTREG       ;
+$727D |         AND     #DATA   ; GET DATA LINE STATE
+$727F |         RTS     ;
+$7280 |     ;*************************************************************
+$7280 |     ;
+$7280 |     ; UNSHIFTED TABLE FOR SCANCODES TO ASCII CONVERSION
+$7280 |     ; SCAN|KEYBOARD
+$7280 |     ; CODE|KEY
+$7280 |     ; ----|----------
+$7280 |     ASCIITBL:
+$7280 |         .BYTE   $00     ; 00 NO KEY PRESSED
+$7280 |         .BYTE   $89     ; 01 F9
+$7280 |         .BYTE   $87     ; 02 RELOCATED F7
+$7280 |         .BYTE   $85     ; 03 F5
+$7280 |         .BYTE   $83     ; 04 F3
+$7280 |         .BYTE   $81     ; 05 F1
+$7280 |         .BYTE   $82     ; 06 F2
+$7280 |         .BYTE   $8C     ; 07 F12
+$7280 |         .BYTE   $00     ; 08
+$7280 |         .BYTE   $8A     ; 09 F10
+$7280 |         .BYTE   $88     ; 0A F8
+$7280 |         .BYTE   $86     ; 0B F6
+$7280 |         .BYTE   $84     ; 0C F4
+$7280 |         .BYTE   $09     ; 0D TAB
+$7280 |         .BYTE   $60     ; 0E `~
+$7280 |         .BYTE   $8F     ; 0F RELOCATED PRINT SCREEN KEY
+$7280 |         .BYTE   $03     ; 10 RELOCATED PAUSE/BREAK KEY
+$7280 |         .BYTE   $A0     ; 11 LEFT ALT (RIGHT ALT TOO)
+$7280 |         .BYTE   $00     ; 12 LEFT SHIFT
+$7280 |         .BYTE   $E0     ; 13 RELOCATED ALT RELEASE CODE
+$7280 |         .BYTE   $00     ; 14 LEFT CTRL (RIGHT CTRL TOO)
+$7280 |         .BYTE   $71     ; 15 QQ
+$7280 |         .BYTE   $31     ; 16 1!
+$7280 |         .BYTE   $00     ; 17
+$7280 |         .BYTE   $00     ; 18
+$7280 |         .BYTE   $00     ; 19
+$7280 |         .BYTE   $7A     ; 1A ZZ
+$7280 |         .BYTE   $73     ; 1B SS
+$7280 |         .BYTE   $61     ; 1C AA
+$7280 |         .BYTE   $77     ; 1D WW
+$7280 |         .BYTE   $32     ; 1E 2@
+$7280 |         .BYTE   $A1     ; 1F WINDOWS 98 MENU KEY (LEFT SIDE)
+$7280 |         .BYTE   $02     ; 20 RELOCATED CTRL-BREAK KEY
+$7280 |         .BYTE   $63     ; 21 CC
+$7280 |         .BYTE   $78     ; 22 XX
+$7280 |         .BYTE   $64     ; 23 DD
+$7280 |         .BYTE   $65     ; 24 EE
+$7280 |         .BYTE   $34     ; 25 4$
+$7280 |         .BYTE   $33     ; 26 3#
+$7280 |         .BYTE   $A2     ; 27 WINDOWS 98 MENU KEY (RIGHT SIDE)
+$7280 |         .BYTE   $00     ; 28
+$7280 |         .BYTE   $20     ; 29 SPACE
+$7280 |         .BYTE   $76     ; 2A VV
+$7280 |         .BYTE   $66     ; 2B FF
+$7280 |         .BYTE   $74     ; 2C TT
+$7280 |         .BYTE   $72     ; 2D RR
+$7280 |         .BYTE   $35     ; 2E 5%
+$7280 |         .BYTE   $A3     ; 2F WINDOWS 98 OPTION KEY (RIGHT CLICK, RIGHT SIDE)
+$7280 |         .BYTE   $00     ; 30
+$7280 |         .BYTE   $6E     ; 31 NN
+$7280 |         .BYTE   $62     ; 32 BB
+$7280 |         .BYTE   $68     ; 33 HH
+$7280 |         .BYTE   $67     ; 34 GG
+$7280 |         .BYTE   $79     ; 35 YY
+$7280 |         .BYTE   $36     ; 36 6^
+$7280 |         .BYTE   $00     ; 37
+$7280 |         .BYTE   $00     ; 38
+$7280 |         .BYTE   $00     ; 39
+$7280 |         .BYTE   $6D     ; 3A MM
+$7280 |         .BYTE   $6A     ; 3B JJ
+$7280 |         .BYTE   $75     ; 3C UU
+$7280 |         .BYTE   $37     ; 3D 7&
+$7280 |         .BYTE   $38     ; 3E 8*
+$7280 |         .BYTE   $00     ; 3F
+$7280 |         .BYTE   $00     ; 40
+$7280 |         .BYTE   $2C     ; 41 ,<
+$7280 |         .BYTE   $6B     ; 42 KK
+$7280 |         .BYTE   $69     ; 43 II
+$7280 |         .BYTE   $6F     ; 44 OO
+$7280 |         .BYTE   $30     ; 45 0)
+$7280 |         .BYTE   $39     ; 46 9(
+$7280 |         .BYTE   $00     ; 47
+$7280 |         .BYTE   $00     ; 48
+$7280 |         .BYTE   $2E     ; 49 .>
+$7280 |         .BYTE   $2F     ; 4A /?
+$7280 |         .BYTE   $6C     ; 4B LL
+$7280 |         .BYTE   $3B     ; 4C ;:
+$7280 |         .BYTE   $70     ; 4D PP
+$7280 |         .BYTE   $2D     ; 4E -_
+$7280 |         .BYTE   $00     ; 4F
+$7280 |         .BYTE   $00     ; 50
+$7280 |         .BYTE   $00     ; 51
+$7280 |         .BYTE   $27     ; 52 '"
+$7280 |         .BYTE   $00     ; 53
+$7280 |         .BYTE   $5B     ; 54 [{
+$7280 |         .BYTE   $3D     ; 55 =+
+$7280 |         .BYTE   $00     ; 56
+$7280 |         .BYTE   $00     ; 57
+$7280 |         .BYTE   $00     ; 58 CAPS
+$7280 |         .BYTE   $00     ; 59 R SHIFT
+$7280 |         .BYTE   $0D     ; 5A <ENTER>
+$7280 |         .BYTE   $5D     ; 5B ]}
+$7280 |         .BYTE   $00     ; 5C
+$7280 |         .BYTE   $5C     ; 5D \|
+$7280 |         .BYTE   $00     ; 5E
+$7280 |         .BYTE   $00     ; 5F
+$7280 |         .BYTE   $00     ; 60
+$7280 |         .BYTE   $00     ; 61
+$7280 |         .BYTE   $00     ; 62
+$7280 |         .BYTE   $00     ; 63
+$7280 |         .BYTE   $00     ; 64
+$7280 |         .BYTE   $00     ; 65
+$7280 |         .BYTE   $08     ; 66 BKSPACE
+$7280 |         .BYTE   $00     ; 67
+$7280 |         .BYTE   $00     ; 68
+$7280 |         .BYTE   $31     ; 69 KP 1
+$7280 |         .BYTE   $2F     ; 6A KP / CONVERTED FROM E04A IN CODE
+$7280 |         .BYTE   $34     ; 6B KP 4
+$7280 |         .BYTE   $37     ; 6C KP 7
+$7280 |         .BYTE   $00     ; 6D
+$7280 |         .BYTE   $00     ; 6E
+$7280 |         .BYTE   $00     ; 6F
+$7280 |         .BYTE   $30     ; 70 KP 0
+$7280 |         .BYTE   $2E     ; 71 KP .
+$7280 |         .BYTE   $32     ; 72 KP 2
+$7280 |         .BYTE   $35     ; 73 KP 5
+$7280 |         .BYTE   $36     ; 74 KP 6
+$7280 |         .BYTE   $38     ; 75 KP 8
+$7280 |         .BYTE   $1B     ; 76 ESC
+$7280 |         .BYTE   $00     ; 77 NUM LOCK
+$7280 |         .BYTE   $8B     ; 78 F11
+$7280 |         .BYTE   $2B     ; 79 KP +
+$7280 |         .BYTE   $33     ; 7A KP 3
+$7280 |         .BYTE   $2D     ; 7B KP -
+$7280 |         .BYTE   $2A     ; 7C KP *
+$7280 |         .BYTE   $39     ; 7D KP 9
+$7280 |         .BYTE   $8D     ; 7E SCROLL LOCK
+$7280 |         .BYTE   $00     ; 7F
+$7280 |     ;
+$7280 |     ; TABLE FOR SHIFTED SCANCODES
+$7280 |     ;
+$7280 |         .BYTE   $00     ; 80
+$7280 |         .BYTE   $C9     ; 81 F9
+$7280 |         .BYTE   $C7     ; 82 RELOCATED F7
+$7280 |         .BYTE   $C5     ; 83 F5 (F7 ACTUAL SCANCODE=83)
+$7280 |         .BYTE   $C3     ; 84 F3
+$7280 |         .BYTE   $C1     ; 85 F1
+$7280 |         .BYTE   $C2     ; 86 F2
+$7280 |         .BYTE   $CC     ; 87 F12
+$7280 |         .BYTE   $00     ; 88
+$7280 |         .BYTE   $CA     ; 89 F10
+$7280 |         .BYTE   $C8     ; 8A F8
+$7280 |         .BYTE   $C6     ; 8B F6
+$7280 |         .BYTE   $C4     ; 8C F4
+$7280 |         .BYTE   $09     ; 8D TAB
+$7280 |         .BYTE   $7E     ; 8E `~
+$7280 |         .BYTE   $CF     ; 8F RELOCATED PRINT SCREEN KEY
+$7280 |         .BYTE   $03     ; 90 RELOCATED PAUSE/BREAK KEY
+$7280 |         .BYTE   $A0     ; 91 LEFT ALT (RIGHT ALT)
+$7280 |         .BYTE   $00     ; 92 LEFT SHIFT
+$7280 |         .BYTE   $E0     ; 93 RELOCATED ALT RELEASE CODE
+$7280 |         .BYTE   $00     ; 94 LEFT CTRL (AND RIGHT CTRL)
+$7280 |         .BYTE   $51     ; 95 QQ
+$7280 |         .BYTE   $21     ; 96 1!
+$7280 |         .BYTE   $00     ; 97
+$7280 |         .BYTE   $00     ; 98
+$7280 |         .BYTE   $00     ; 99
+$7280 |         .BYTE   $5A     ; 9A ZZ
+$7280 |         .BYTE   $53     ; 9B SS
+$7280 |         .BYTE   $41     ; 9C AA
+$7280 |         .BYTE   $57     ; 9D WW
+$7280 |         .BYTE   $40     ; 9E 2@
+$7280 |         .BYTE   $E1     ; 9F WINDOWS 98 MENU KEY (LEFT SIDE)
+$7280 |         .BYTE   $02     ; A0 RELOCATED CTRL-BREAK KEY
+$7280 |         .BYTE   $43     ; A1 CC
+$7280 |         .BYTE   $58     ; A2 XX
+$7280 |         .BYTE   $44     ; A3 DD
+$7280 |         .BYTE   $45     ; A4 EE
+$7280 |         .BYTE   $24     ; A5 4$
+$7280 |         .BYTE   $23     ; A6 3#
+$7280 |         .BYTE   $E2     ; A7 WINDOWS 98 MENU KEY (RIGHT SIDE)
+$7280 |         .BYTE   $00     ; A8
+$7280 |         .BYTE   $20     ; A9 SPACE
+$7280 |         .BYTE   $56     ; AA VV
+$7280 |         .BYTE   $46     ; AB FF
+$7280 |         .BYTE   $54     ; AC TT
+$7280 |         .BYTE   $52     ; AD RR
+$7280 |         .BYTE   $25     ; AE 5%
+$7280 |         .BYTE   $E3     ; AF WINDOWS 98 OPTION KEY (RIGHT CLICK, RIGHT SIDE)
+$7280 |         .BYTE   $00     ; B0
+$7280 |         .BYTE   $4E     ; B1 NN
+$7280 |         .BYTE   $42     ; B2 BB
+$7280 |         .BYTE   $48     ; B3 HH
+$7280 |         .BYTE   $47     ; B4 GG
+$7280 |         .BYTE   $59     ; B5 YY
+$7280 |         .BYTE   $5E     ; B6 6^
+$7280 |         .BYTE   $00     ; B7
+$7280 |         .BYTE   $00     ; B8
+$7280 |         .BYTE   $00     ; B9
+$7280 |         .BYTE   $4D     ; BA MM
+$7280 |         .BYTE   $4A     ; BB JJ
+$7280 |         .BYTE   $55     ; BC UU
+$7280 |         .BYTE   $26     ; BD 7&
+$7280 |         .BYTE   $2A     ; BE 8*
+$7280 |         .BYTE   $00     ; BF
+$7280 |         .BYTE   $00     ; C0
+$7280 |         .BYTE   $3C     ; C1 ,<
+$7280 |         .BYTE   $4B     ; C2 KK
+$7280 |         .BYTE   $49     ; C3 II
+$7280 |         .BYTE   $4F     ; C4 OO
+$7280 |         .BYTE   $29     ; C5 0)
+$7280 |         .BYTE   $28     ; C6 9(
+$7280 |         .BYTE   $00     ; C7
+$7280 |         .BYTE   $00     ; C8
+$7280 |         .BYTE   $3E     ; C9 .>
+$7280 |         .BYTE   $3F     ; CA /?
+$7280 |         .BYTE   $4C     ; CB LL
+$7280 |         .BYTE   $3A     ; CC ;:
+$7280 |         .BYTE   $50     ; CD PP
+$7280 |         .BYTE   $5F     ; CE -_
+$7280 |         .BYTE   $00     ; CF
+$7280 |         .BYTE   $00     ; D0
+$7280 |         .BYTE   $00     ; D1
+$7280 |         .BYTE   $22     ; D2 '"
+$7280 |         .BYTE   $00     ; D3
+$7280 |         .BYTE   $7B     ; D4 [{
+$7280 |         .BYTE   $2B     ; D5 =+
+$7280 |         .BYTE   $00     ; D6
+$7280 |         .BYTE   $00     ; D7
+$7280 |         .BYTE   $00     ; D8 CAPS
+$7280 |         .BYTE   $00     ; D9 R SHIFT
+$7280 |         .BYTE   $0D     ; DA <ENTER>
+$7280 |         .BYTE   $7D     ; DB ]}
+$7280 |         .BYTE   $00     ; DC
+$7280 |         .BYTE   $7C     ; DD \|
+$7280 |         .BYTE   $00     ; DE
+$7280 |         .BYTE   $00     ; DF
+$7280 |         .BYTE   $00     ; E0
+$7280 |         .BYTE   $00     ; E1
+$7280 |         .BYTE   $00     ; E2
+$7280 |         .BYTE   $00     ; E3
+$7280 |         .BYTE   $00     ; E4
+$7280 |         .BYTE   $00     ; E5
+$7280 |         .BYTE   $08     ; E6 BKSPACE
+$7280 |         .BYTE   $00     ; E7
+$7280 |         .BYTE   $00     ; E8
+$7280 |         .BYTE   $91     ; E9 KP 1
+$7280 |         .BYTE   $2F     ; EA KP / CONVERTED FROM E04A IN CODE
+$7280 |         .BYTE   $94     ; EB KP 4
+$7280 |         .BYTE   $97     ; EC KP 7
+$7280 |         .BYTE   $00     ; ED
+$7280 |         .BYTE   $00     ; EE
+$7280 |         .BYTE   $00     ; EF
+$7280 |         .BYTE   $90     ; F0 KP 0
+$7280 |         .BYTE   $7F     ; F1 KP .
+$7280 |         .BYTE   $92     ; F2 KP 2
+$7280 |         .BYTE   $95     ; F3 KP 5
+$7280 |         .BYTE   $96     ; F4 KP 6
+$7280 |         .BYTE   $98     ; F5 KP 8
+$7280 |         .BYTE   $1B     ; F6 ESC
+$7280 |         .BYTE   $00     ; F7 NUM LOCK
+$7280 |         .BYTE   $CB     ; F8 F11
+$7280 |         .BYTE   $2B     ; F9 KP +
+$7280 |         .BYTE   $93     ; FA KP 3
+$7280 |         .BYTE   $2D     ; FB KP -
+$7280 |         .BYTE   $2A     ; FC KP *
+$7280 |         .BYTE   $99     ; FD KP 9
+$7280 |         .BYTE   $CD     ; FE SCROLL LOCK
+$7280 |     ; NOT USED .BYTE $00 ; FF
+$7280 |     ; END

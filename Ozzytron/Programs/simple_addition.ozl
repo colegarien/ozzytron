@@ -1,0 +1,32 @@
+﻿$0000 |     ;
+$0000 |     ; A SUPER SIMPLE ADDITION TYPE PROGRAM
+$0000 |     ; JUST TESTING OUT THE SIMPLE ASSEMBLER
+$0000 |     ;
+$0000 |
+$0000 |     .ORG        $8000
+$8000 |
+$8000 |     ONE =       $01
+$8000 |     FIVE        =       $05
+$8000 |     EIGHT       =       $08
+$8000 |
+$8000 |     LDA #ONE
+$8002 |     STA $0200
+$8005 |     LDA #FIVE
+$8007 |     STA $0201
+$800A |     LDA #EIGHT
+$800C |     STA $0202
+$800F |     LDA $00
+$8011 |     ADC $0200
+$8014 |     ADC $0201
+$8017 |     ADC $0202
+$801A |     STA $0203
+$801D |
+$801D |     NOP
+$801E |     NOP
+$801F |     NOP
+$8020 |
+$8020 |     TRAP:
+$8020 |     BRA TRAP
+$8022 |
+$8022 |     .ORG        $FFFC
+$FFFC |     .WORD       $8000   ; POINT RESET VECTOR TO START OF PROGRAM

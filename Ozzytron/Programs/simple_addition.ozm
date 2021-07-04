@@ -1,0 +1,32 @@
+﻿; 
+; A super simple addition type program
+; just testing out the simple assembler
+; 
+
+.org    $8000
+
+one = $01
+five = $05
+eight = $08
+
+LDA #one
+STA $0200
+LDA #five
+STA $0201
+LDA #eight
+STA $0202
+LDA $00
+ADC $0200
+ADC $0201
+ADC $0202
+STA $0203
+
+NOP
+NOP
+NOP
+
+trap:
+BRA trap
+
+.org $FFFC
+.word $8000 ; point reset vector to start of program
